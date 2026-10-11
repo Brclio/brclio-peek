@@ -4,3 +4,9 @@ dist/
 *.tsbuildinfo
 .openai/local/
 artifacts/
+.vercel/
+.wrangler/
+.dev.vars*
+.env
+.env.*
+!.env.example

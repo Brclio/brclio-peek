@@ -4,7 +4,7 @@
 
 ## 本地运行
 
-需要 Node.js 22.6 或更新版本。
+使用 Node.js 22 LTS 的最新补丁版本（至少 22.6）。项目通过 `.node-version` 和 `package.json` 的 `engines` 固定部署构建的 Node.js 主版本。
 
 ```sh
 npm install
@@ -49,3 +49,88 @@ npm run preview
 React 19、TypeScript、Vite、Lucide、Prism、react-markdown。界面由 [Brclio Design System](https://github.com/Brclio/brclio-design-system) 的 App 模板改编，遵循其 CC BY-NC-SA 4.0 署名要求。示例 SVG 为本项目绘制，示例视频使用 [MDN CC0 flower.webm](https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.webm)。
 
 GitHub API 参考：[Git trees](https://docs.github.com/en/rest/git/trees#get-a-tree)、[Git blobs](https://docs.github.com/en/rest/git/blobs#get-a-blob)。
+
+## 部署
+
+项目构建为纯静态网站，同一份代码支持 Vercel、Cloudflare Workers 和 Cloudflare Pages。无需数据库、服务端函数或环境变量；GitHub API 和媒体请求由浏览器直接发起。以下配置用于独立部署，`.openai/hosting.json` 仅供原有 Sites 托管使用。
+
+### Vercel
+
+在 Vercel 选择 **Add New → Project**，导入本项目的 GitHub 仓库，Root Directory 选择仓库根目录。根目录的 `vercel.json` 已配置以下内容：
+
+| 设置 | 值 |
+| --- | --- |
+| Framework Preset | Vite |
+| Install Command | `npm ci` |
+| Build Command | `npm run build` |
+| Output Directory | `dist` |
+| Node.js Version | 22.x |
+
+点击 Deploy 后，后续 Git 推送由 Vercel 自动构建部署。配置中的 SPA rewrite 会让页面导航回到 `index.html`。
+
+也可从本地部署，先登录，再选择目标账号和项目：
+
+```sh
+npm ci
+npx vercel@63.1.2 login
+npx vercel@63.1.2          # 预览部署，首次运行会关联或创建项目
+npx vercel@63.1.2 --prod   # 发布到所关联项目的生产环境
+```
+
+官方说明：[Vite on Vercel](https://vercel.com/docs/frameworks/frontend/vite)。
+
+### Cloudflare Workers（静态资源）
+
+根目录的 `wrangler.jsonc` 使用 Workers Static Assets 托管 `dist`，无需编写 Worker 脚本。`single-page-application` 设置为未匹配静态文件的页面导航提供首页回退；`previews` 配置供分支预览使用。
+
+本地发布：
+
+```sh
+npm ci
+npx wrangler login
+npm run deploy:cloudflare
+```
+
+部署命令会先构建，再上传静态资源。默认 Worker 名称为 `brclio-peek`；如需其他名称，修改 `wrangler.jsonc` 的 `name`。账号下已有同名 Worker 时，发布会更新该 Worker；在多账号场景先确认 Wrangler 使用的目标账号。登录和账号信息保存在工具本地状态中，不提交到仓库。
+
+也可在 Cloudflare 控制台的 **Workers & Pages → Create application → 导入 Git 仓库** 中选择 Workers，使用：
+
+| 设置 | 值 |
+| --- | --- |
+| Root Directory | 仓库根目录 |
+| Build Command | `npm run build` |
+| Deploy Command | `npx wrangler deploy` |
+| Preview / Non-production Deploy Command | `npx wrangler preview` |
+| Node.js Version | 由 `.node-version` 选择 22 |
+
+Worker 项目名称应与 `wrangler.jsonc` 的 `name` 一致。控制台连接 Git 后可自动部署；手动发布和 Git 自动发布选择一种管理方式即可。
+
+仅在本地检查和预览，不上传：
+
+```sh
+npm run check:cloudflare    # 构建并执行 Wrangler dry run
+npm run preview:cloudflare  # 构建并用 Workers 本地运行时预览
+```
+
+官方说明：[Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/)、[SPA routing](https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/)。
+
+### Cloudflare Pages
+
+若选择 Pages，在 Cloudflare 控制台创建 Pages 项目并连接 Git 仓库，选择 **React (Vite)**，构建命令填 `npm run build`，输出目录填 `dist`，Root Directory 为仓库根目录。Node.js 使用 `.node-version` 中的 22；也可在构建设置里指定 `NODE_VERSION=22`。
+
+Pages 的纯静态 SPA 默认会回退到根目录的 `index.html`，因此这里不额外添加顶层 `404.html` 或覆盖静态资源的通配 rewrite。
+
+命令行部署直接指定 Pages 的静态目录和项目名称：
+
+```sh
+npm ci
+npx wrangler login
+npx wrangler pages project create brclio-peek --production-branch main
+npm run deploy:pages
+```
+
+创建项目只需执行一次，已有项目则跳过。使用其他 Pages 项目名称时，同步修改 `package.json` 中 `deploy:pages` 的 `--project-name`；`npm run preview:pages` 可在本地预览。根目录的 `wrangler.jsonc` 专用于 Workers，没有 `pages_build_output_dir`，Pages 会提示并忽略它，使用命令行指定的 `dist`。Pages 的 Git integration 项目和 Direct Upload 项目是两种创建方式，按所需发布方式选择。
+
+官方说明：[Vite on Pages](https://developers.cloudflare.com/pages/framework-guides/deploy-a-vite3-project/)、[Pages SPA serving](https://developers.cloudflare.com/pages/configuration/serving-pages/)、[Pages Wrangler configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/)。
+
+部署后使用 HTTPS 地址访问，才能正常使用浏览器剪贴板 API。收藏、最近打开和复制格式偏好保存在当前站点域名下，切换托管域名时会使用独立的浏览器存储。
