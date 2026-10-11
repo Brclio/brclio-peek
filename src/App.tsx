@@ -5,6 +5,9 @@ import { demoRepository } from './lib/demo'
 import { loadRepository, formatBytes, getRawUrl, getGithubUrl, getArchiveUrl } from './lib/github'
 import type { RepoEntry, Repository, FileKind } from './lib/github'
 import { FilePreview } from './components/FilePreview'
+import { CopyPathControl } from './components/CopyPathControl'
+import { formatCopyPaths, normalizeCopyPathFormat, shouldHandlePathCopy } from './lib/copy-path'
+import type { CopyPathFormat } from './lib/copy-path'
 
 type View = 'grid' | 'list' | 'columns' | 'gallery'
 type Category = 'all' | 'favorites' | 'image' | 'video' | 'code' | 'document'
@@ -44,6 +47,7 @@ export default function App() {
   const location = history[historyIndex]
   const [selectedPaths,setSelectedPaths] = useState<string[]>([])
   const [view,setView] = useState<View>(()=>readSaved('peek-view','grid'))
+  const [copyPathFormat,setCopyPathFormat] = useState<CopyPathFormat>(()=>normalizeCopyPathFormat(readSaved('peek-copy-path-format','url')))
   const [search,setSearch] = useState('')
   const [sort,setSort] = useState('name')
   const [showInspector,setShowInspector] = useState(true)
@@ -66,7 +70,7 @@ export default function App() {
   const repoId = `${repository.owner}/${repository.name}`
   const favoriteKey = (entry:RepoEntry)=>`${repoId}/${entry.path}`
   const selected = repository.entries.find(e=>e.path===selectedPaths[selectedPaths.length-1])
-  const selectedEntries = repository.entries.filter(e=>selectedPaths.includes(e.path))
+  const selectedEntries = selectedPaths.map(path=>repository.entries.find(entry=>entry.path===path)).filter((entry):entry is RepoEntry=>Boolean(entry))
   const isFavorite = (entry:RepoEntry)=>favorites.includes(favoriteKey(entry))
   const children = (path:string)=>repository.entries.filter(e=>parentPath(e.path)===path)
 
@@ -89,6 +93,7 @@ export default function App() {
   const notify = useCallback((message:string)=>setToast(message),[])
   useEffect(()=>{if(toast){const timer=setTimeout(()=>setToast(''),3300);return()=>clearTimeout(timer)}},[toast])
   useEffect(()=>save('peek-view',view),[view])
+  useEffect(()=>save('peek-copy-path-format',copyPathFormat),[copyPathFormat])
   useEffect(()=>save('peek-favorites',favorites),[favorites])
   useEffect(()=>save('peek-recents',recents),[recents])
   useEffect(()=>()=>loadController.current?.abort(),[])
@@ -134,12 +139,22 @@ export default function App() {
     else{setSelectedPaths([entry.path]);anchorPath.current=entry.path}
   }
   const showContext = (entry:RepoEntry,event:ReactMouseEvent)=>{
-    event.preventDefault();setSelectedPaths([entry.path]);anchorPath.current=entry.path
+    event.preventDefault()
+    if(!selectedPaths.includes(entry.path)){setSelectedPaths([entry.path]);anchorPath.current=entry.path}
     setContext({x:Math.max(0,Math.min(event.clientX,window.innerWidth-220)),y:Math.max(0,Math.min(event.clientY,window.innerHeight-260)),entry})
   }
   const openEntry = (entry:RepoEntry)=>{if(entry.type==='dir')navigate(entry.path);else{setSelectedPaths([entry.path]);anchorPath.current=entry.path;setQuickLook(true)}}
   const toggleFavorite = (entry:RepoEntry)=>setFavorites(f=>f.includes(favoriteKey(entry))?f.filter(x=>x!==favoriteKey(entry)):[...f,favoriteKey(entry)])
-  const copyPath = async (entry:RepoEntry)=>{try{await navigator.clipboard.writeText(entry.path);notify('已复制文件路径')}catch{notify('无法访问剪贴板，请在文件信息中复制路径')}}
+  const announceCopy = (entries:RepoEntry[])=>notify(`已复制${entries.length>1?` ${entries.length} 个`:''}${copyPathFormat==='url'?'完整链接':'相对路径'}`)
+  const copyPaths = async (entries:RepoEntry[]=selectedEntries)=>{
+    const text=formatCopyPaths(repository,entries,copyPathFormat)
+    if(!text)return
+    try{
+      await navigator.clipboard.writeText(text)
+      announceCopy(entries)
+    }catch{notify('无法访问剪贴板，请选中文件信息中的路径手动复制。')}
+  }
+  const copyPath = (entry:RepoEntry)=>copyPaths([entry])
   const downloadFile = async (entry:RepoEntry)=>{
     if(entry.type==='dir')return
     try{
@@ -160,6 +175,14 @@ export default function App() {
       const target=event.target instanceof Element?event.target:null
       const typing=Boolean(target?.closest('input,textarea,select,[contenteditable="true"]'))
       const modifier=event.metaKey||event.ctrlKey
+      if(shouldHandlePathCopy(event,{
+        typing,
+        hasTextSelection:Boolean(window.getSelection()?.toString()),
+        hasEntries:selectedEntries.length>0,
+        inWorkspace:!help&&Boolean(target?.closest('.finder-window,.context-menu')||(quickLook&&target&&dialogRef.current?.contains(target))),
+      })){
+        event.preventDefault();void copyPaths(quickLook&&selected?[selected]:selectedEntries);return
+      }
       if(modifier&&['k','f'].includes(event.key.toLowerCase())){
         event.preventDefault();setQuickLook(false);setHelp(false);setRecentOpen(false);setContext(null)
         const destination=event.key.toLowerCase()==='k'?repoInputRef.current:searchRef.current
@@ -222,7 +245,20 @@ export default function App() {
         })
       }
     }
-    window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)
+    // Some Mac browser shells route the system Copy command directly to a copy event.
+    const onCopy=(event:ClipboardEvent)=>{
+      const target=event.target instanceof Element?event.target:null
+      if(!event.clipboardData||!shouldHandlePathCopy({key:'c',metaKey:true,ctrlKey:false,altKey:false,shiftKey:false},{
+        typing:Boolean(target?.closest('input,textarea,select,[contenteditable="true"]')),
+        hasTextSelection:Boolean(window.getSelection()?.toString()),
+        hasEntries:selectedEntries.length>0,
+        inWorkspace:!help&&Boolean(target?.closest('.finder-window,.context-menu')||(quickLook&&target&&dialogRef.current?.contains(target))),
+      }))return
+      const entries=quickLook&&selected?[selected]:selectedEntries
+      event.preventDefault();event.clipboardData.setData('text/plain',formatCopyPaths(repository,entries,copyPathFormat));announceCopy(entries)
+    }
+    window.addEventListener('keydown',onKey);window.addEventListener('copy',onCopy)
+    return()=>{window.removeEventListener('keydown',onKey);window.removeEventListener('copy',onCopy)}
   })
 
   useEffect(()=>{
@@ -288,7 +324,7 @@ export default function App() {
         </aside>
 
         <div className="finder-main">
-          <div className="finder-toolbar"><div className="navigation-controls"><button className="icon-button sidebar-toggle" aria-label="切换侧边栏" onClick={()=>setSidebarOpen(v=>!v)}><Menu size={18}/></button><button className="icon-button" title="后退 (⌥ ←)" aria-label="后退" disabled={historyIndex===0} onClick={()=>moveHistory(-1)}><ChevronLeft size={19}/></button><button className="icon-button" title="前进 (⌥ →)" aria-label="前进" disabled={historyIndex===history.length-1} onClick={()=>moveHistory(1)}><ChevronRight size={19}/></button>{location.path&&<button className="icon-button" title="返回上级目录 (⌘ ↑)" aria-label="返回上级目录" onClick={()=>navigate(parentPath(location.path))}><ArrowUp size={16}/></button>}</div><div className="toolbar-title"><strong>{displayTitle}</strong><span>{repository.isDemo?'示例仓库':`${repository.owner}/${repository.name}`}</span></div><div className="toolbar-actions"><button className="icon-button" title="下载整个仓库 ZIP" aria-label="下载仓库 ZIP" onClick={downloadRepo}><Download size={17}/></button><button className="icon-button" title="快速预览 (空格)" aria-label="快速预览" disabled={!selected} onClick={()=>setQuickLook(true)}><Eye size={18}/></button><span className="toolbar-divider"/><button className={`icon-button ${showInspector?'toggled':''}`} title="切换预览栏" aria-label="切换预览栏" aria-pressed={showInspector} onClick={()=>setShowInspector(v=>!v)}><PanelRight size={17}/></button></div></div>
+          <div className="finder-toolbar"><div className="navigation-controls"><button className="icon-button sidebar-toggle" aria-label="切换侧边栏" onClick={()=>setSidebarOpen(v=>!v)}><Menu size={18}/></button><button className="icon-button" title="后退 (⌥ ←)" aria-label="后退" disabled={historyIndex===0} onClick={()=>moveHistory(-1)}><ChevronLeft size={19}/></button><button className="icon-button" title="前进 (⌥ →)" aria-label="前进" disabled={historyIndex===history.length-1} onClick={()=>moveHistory(1)}><ChevronRight size={19}/></button>{location.path&&<button className="icon-button" title="返回上级目录 (⌘ ↑)" aria-label="返回上级目录" onClick={()=>navigate(parentPath(location.path))}><ArrowUp size={16}/></button>}</div><div className="toolbar-title"><strong>{displayTitle}</strong><span>{repository.isDemo?'示例仓库':`${repository.owner}/${repository.name}`}</span></div><div className="toolbar-actions"><CopyPathControl format={copyPathFormat} onFormatChange={setCopyPathFormat} onCopy={()=>void copyPaths()} selectedCount={selectedEntries.length}/><button className="icon-button" title="下载整个仓库 ZIP" aria-label="下载仓库 ZIP" onClick={downloadRepo}><Download size={17}/></button><button className="icon-button" title="快速预览 (空格)" aria-label="快速预览" disabled={!selected} onClick={()=>setQuickLook(true)}><Eye size={18}/></button><span className="toolbar-divider"/><button className={`icon-button ${showInspector?'toggled':''}`} title="切换预览栏" aria-label="切换预览栏" aria-pressed={showInspector} onClick={()=>setShowInspector(v=>!v)}><PanelRight size={17}/></button></div></div>
           <div className="finder-subtoolbar"><div className="branch-select"><GitBranch size={14}/><select aria-label="分支" value={repository.branch} disabled={loading||repository.isDemo} onChange={e=>void openRepo(`https://github.com/${repoId}/tree/${e.target.value.split('/').map(encodeURIComponent).join('/')}`)}>{[...new Set([repository.branch,...(repository.branches||[])])].map(b=><option key={b} value={b}>{b}</option>)}</select><ChevronDown size={11}/></div><div className="view-switcher" aria-label="视图模式">{views.map(({id,label,icon:Icon})=><button key={id} aria-label={label} title={label} aria-pressed={view===id} className={view===id?'active':''} onClick={()=>{setView(id);if(id==='gallery'&&!selected&&fileEntries[0])setSelectedPaths([fileEntries[0].path])}}><Icon size={15}/></button>)}</div><div className="sort-control"><ArrowUpDown size={13}/><select aria-label="排序方式" value={sort} onChange={e=>setSort(e.target.value)}><option value="name">名称</option><option value="size">大小</option><option value="type">类型</option></select><ChevronDown size={10}/></div><div className="file-search"><Search size={14}/><input ref={searchRef} aria-label="搜索文件" placeholder="搜索文件…" value={search} onChange={e=>changeSearch(e.target.value)}/>{search&&<button aria-label="清除搜索" onClick={()=>changeSearch('')}><X size={12}/></button>}</div></div>
 
           <div className="finder-body"><div className="explorer" ref={explorerRef} tabIndex={0} aria-label="文件区域">
@@ -297,7 +333,7 @@ export default function App() {
             {view==='grid'&&!loading&&visibleEntries.length>0&&<div className="space-hint"><span className="space-symbol">␣</span>一点好奇，一下空格。<span>选中文件，即刻预览</span></div>}
           </div>
 
-          {showInspector&&<aside className="inspector" aria-label="文件预览栏"><div className="inspector-header"><span>{selectedPaths.length>1?'所选项目':selected?'预览':'仓库信息'}</span>{selected&&selectedPaths.length===1?<button className={`icon-button ${isFavorite(selected)?'is-favorite':''}`} title="收藏文件" aria-label="收藏文件" aria-pressed={isFavorite(selected)} onClick={()=>toggleFavorite(selected)}><Star size={15} fill={isFavorite(selected)?'currentColor':'none'}/></button>:<Info size={15}/>}</div>{selectedPaths.length>1?<div className="multi-info"><FolderArt/><h2>已选择 {selectedPaths.length} 个项目</h2><p>{formatBytes(selectedEntries.reduce((n,e)=>n+e.size,0))}</p><button className="secondary-button" onClick={async()=>{try{await navigator.clipboard.writeText(selectedPaths.join('\n'));notify('已复制所选文件路径')}catch{notify('无法访问剪贴板')}}}><Copy size={14}/>复制所有路径</button></div>:selected?<><FilePreview entry={selected} repository={repository}/><div className="file-details"><div><span>路径</span><button title="复制路径" onClick={()=>void copyPath(selected)}>{selected.path}<Copy size={12}/></button></div></div><div className="inspector-file-actions"><button className="secondary-button" onClick={()=>setQuickLook(true)}><Eye size={14}/>快速预览 <kbd>空格</kbd></button>{selected.type==='file'&&<button className="text-button" onClick={()=>void downloadFile(selected)}><Download size={13}/>下载文件</button>}</div></>:<><div className="repo-illustration"><span className="illustration-circle"/><FolderArt/><span className="illustration-spark one">✦</span><span className="illustration-spark two">✧</span><span className="illustration-dot"/></div><div className="repo-inspector-title"><h2>{repository.name}</h2><span className={`repo-badge ${repository.isDemo?'':'live'}`}>{repository.isDemo?'示例仓库':'公开仓库'}</span><p>{repository.description||'探索这个仓库里的每一个文件。'}</p></div><div className="file-details repository-details"><div><span>所有者</span><strong>{repository.owner}</strong></div><div><span>当前分支</span><strong><GitBranch size={12}/>{repository.branch}</strong></div><div><span>文件数量</span><strong>{fileCount} 个文件</strong></div><div><span>文件总大小</span><strong>{formatBytes(totalSize)}</strong></div></div>{!repository.isDemo&&<a className="github-link" href={repository.htmlUrl} target="_blank" rel="noreferrer"><Github size={14}/>在 GitHub 中打开<ExternalLink size={12}/></a>}<div className="inspector-tip"><Sparkles size={16}/><p>双击文件夹进入目录<br/>选中文件，按空格快速预览</p></div></>}</aside>}
+          {showInspector&&<aside className="inspector" aria-label="文件预览栏"><div className="inspector-header"><span>{selectedPaths.length>1?'所选项目':selected?'预览':'仓库信息'}</span>{selected&&selectedPaths.length===1?<button className={`icon-button ${isFavorite(selected)?'is-favorite':''}`} title="收藏文件" aria-label="收藏文件" aria-pressed={isFavorite(selected)} onClick={()=>toggleFavorite(selected)}><Star size={15} fill={isFavorite(selected)?'currentColor':'none'}/></button>:<Info size={15}/>}</div>{selectedPaths.length>1?<div className="multi-info"><FolderArt/><h2>已选择 {selectedPaths.length} 个项目</h2><p>{formatBytes(selectedEntries.reduce((n,e)=>n+e.size,0))}</p><button className="secondary-button" onClick={()=>void copyPaths()}><Copy size={14}/>复制所选路径 <kbd>⌘ C</kbd></button><p className="copy-path-hint">{copyPathFormat==='url'?'完整 GitHub 链接，每行一个':'从仓库根目录开始，每行一个'}</p></div>:selected?<><FilePreview entry={selected} repository={repository}/><div className="file-details"><div><span>{copyPathFormat==='url'?'完整链接':'相对路径'}</span><button className="path-value" title={formatCopyPaths(repository,[selected],copyPathFormat)} aria-label="复制当前文件路径" onClick={()=>void copyPath(selected)}>{formatCopyPaths(repository,[selected],copyPathFormat)}<Copy size={12}/></button></div><p className="copy-path-hint">{copyPathFormat==='url'?'复制包含分支和文件位置的 GitHub 链接':'从仓库根目录开始，不随当前文件夹改变'}</p></div><div className="inspector-file-actions"><button className="secondary-button" onClick={()=>setQuickLook(true)}><Eye size={14}/>快速预览 <kbd>空格</kbd></button>{selected.type==='file'&&<button className="text-button" onClick={()=>void downloadFile(selected)}><Download size={13}/>下载文件</button>}</div></>:<><div className="repo-illustration"><span className="illustration-circle"/><FolderArt/><span className="illustration-spark one">✦</span><span className="illustration-spark two">✧</span><span className="illustration-dot"/></div><div className="repo-inspector-title"><h2>{repository.name}</h2><span className={`repo-badge ${repository.isDemo?'':'live'}`}>{repository.isDemo?'示例仓库':'公开仓库'}</span><p>{repository.description||'探索这个仓库里的每一个文件。'}</p></div><div className="file-details repository-details"><div><span>所有者</span><strong>{repository.owner}</strong></div><div><span>当前分支</span><strong><GitBranch size={12}/>{repository.branch}</strong></div><div><span>文件数量</span><strong>{fileCount} 个文件</strong></div><div><span>文件总大小</span><strong>{formatBytes(totalSize)}</strong></div></div>{!repository.isDemo&&<a className="github-link" href={repository.htmlUrl} target="_blank" rel="noreferrer"><Github size={14}/>在 GitHub 中打开<ExternalLink size={12}/></a>}<div className="inspector-tip"><Sparkles size={16}/><p>双击文件夹进入目录<br/>选中文件，按空格快速预览</p></div></>}</aside>}
           </div>
           <div className="finder-status"><div className="breadcrumbs"><button aria-label="仓库根目录" onClick={()=>navigate('')}><Github size={12}/><span>{repository.name}</span></button>{location.category!=='all'?<><ChevronRight size={11}/><span>{categoryNames[location.category]}</span></>:location.path.split('/').filter(Boolean).map((part,index)=><span className="crumb-pair" key={index}><ChevronRight size={11}/><button onClick={()=>navigate(location.path.split('/').slice(0,index+1).join('/'))}>{part}</button></span>)}</div><div className="status-right"><span>{selectedPaths.length?`已选 ${selectedPaths.length} 项 / `:''}{visibleEntries.length} 个项目</span>{view==='grid'&&<div className="size-slider"><Grid2X2 size={10}/><input type="range" aria-label="图标大小" min="90" max="160" value={iconSize} onChange={e=>setIconSize(Number(e.target.value))}/><Grid2X2 size={14}/></div>}</div></div>
         </div>
@@ -307,8 +343,8 @@ export default function App() {
       <footer className="page-footer"><span>Made for the curious. <span className="footer-spark">✳</span> Crafted by <a href="https://brclio.com" target="_blank" rel="noreferrer">Brclio</a></span><span>一探究竟，从这里开始。<button onClick={()=>setHelp(true)}>键盘快捷键 <Keyboard size={13}/></button></span></footer>
     </main>
 
-    {context&&!quickLook&&!help&&<div className="context-menu" style={{left:context.x,top:context.y}} role="menu"><button role="menuitem" onClick={()=>openEntry(context.entry)}><Eye size={15}/>{context.entry.type==='dir'?'打开文件夹':'快速预览'}<kbd>↵</kbd></button><button role="menuitem" onClick={()=>toggleFavorite(context.entry)}><Star size={15}/>{isFavorite(context.entry)?'取消收藏':'添加到收藏'}</button><button role="menuitem" onClick={()=>void copyPath(context.entry)}><Copy size={15}/>复制路径</button>{context.entry.type==='file'&&<button role="menuitem" onClick={()=>void downloadFile(context.entry)}><Download size={15}/>下载文件</button>}{!repository.isDemo&&<a role="menuitem" href={getGithubUrl(repository,context.entry)} target="_blank" rel="noreferrer"><ExternalLink size={15}/>在 GitHub 打开</a>}</div>}
+    {context&&!quickLook&&!help&&<div className="context-menu" style={{left:context.x,top:context.y}} role="menu"><button role="menuitem" onClick={()=>openEntry(context.entry)}><Eye size={15}/>{context.entry.type==='dir'?'打开文件夹':'快速预览'}<kbd>↵</kbd></button><button role="menuitem" onClick={()=>toggleFavorite(context.entry)}><Star size={15}/>{isFavorite(context.entry)?'取消收藏':'添加到收藏'}</button><button role="menuitem" onClick={()=>void copyPaths()}><Copy size={15}/>{copyPathFormat==='url'?'复制完整链接':'复制相对路径'}<kbd>⌘ C</kbd></button>{context.entry.type==='file'&&<button role="menuitem" onClick={()=>void downloadFile(context.entry)}><Download size={15}/>下载文件</button>}{!repository.isDemo&&<a role="menuitem" href={getGithubUrl(repository,context.entry)} target="_blank" rel="noreferrer"><ExternalLink size={15}/>在 GitHub 打开</a>}</div>}
     {toast&&<div className="toast" role="status"><Check size={16}/>{toast}</div>}
-    {(quickLook&&selected||help)&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuickLook(false);setHelp(false)}}}><div ref={dialogRef} className={`modal-content ${help?'help-modal':'quick-look'}`} role="dialog" tabIndex={-1} aria-modal="true" aria-label={help?'Peek 使用指南':`${selected?.name} 快速预览`}><div className="modal-header"><div><span className="modal-dot"/>{help?'一点指南，轻松上手':selected?.name}</div><div>{!help&&selected?.type==='file'&&<button className="icon-button" aria-label="下载当前文件" onClick={()=>void downloadFile(selected)}><Download size={17}/></button>}<button className="icon-button" aria-label="关闭预览" onClick={()=>{setQuickLook(false);setHelp(false)}}><X size={20}/></button></div></div>{help?<div className="help-content"><span className="help-eyebrow">HELLO, CURIOUS HUMAN.</span><h2>熟悉的操作，全新的发现。</h2><p>粘贴一个公开 GitHub 仓库链接，像浏览本地文件夹一样探索它。</p><div className="shortcut-list">{[['快速预览 / 关闭预览','空格'],['选择上一个 / 下一个文件','↑ ↓ ← →'],['打开文件 / 进入文件夹','Enter'],['选择多个文件','⌘ / Ctrl + 点击'],['连续选择','Shift + 点击'],['选择所有文件','⌘ / Ctrl + A'],['聚焦仓库链接','⌘ / Ctrl + K'],['搜索整个仓库','⌘ / Ctrl + F'],['返回上级目录','⌘ / Ctrl + ↑'],['关闭弹窗','Esc']].map(([label,key])=><div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div><div className="help-note"><Info size={17}/><p>支持公开仓库、分支和文件链接。网页以只读方式浏览，收藏保存在当前浏览器。GitHub 未登录 API 有调用额度；私有仓库、重命名和删除暂不支持。下载 ZIP 后，可在 Mac 上解压并用 Finder 打开。</p></div><button className="primary-button" onClick={()=>setHelp(false)}>开始探索<ArrowUpRight size={15}/></button></div>:selected&&<><div className="quick-look-body"><FilePreview key={`${repoId}/${selected.path}`} entry={selected} repository={repository} large onDownload={()=>void downloadFile(selected)}/></div><div className="quick-look-footer"><span>{selected.path}</span><span>{formatBytes(selected.size)}<kbd>←</kbd><kbd>→</kbd>切换文件</span></div></>}</div></div>}
+    {(quickLook&&selected||help)&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuickLook(false);setHelp(false)}}}><div ref={dialogRef} className={`modal-content ${help?'help-modal':'quick-look'}`} role="dialog" tabIndex={-1} aria-modal="true" aria-label={help?'Peek 使用指南':`${selected?.name} 快速预览`}><div className="modal-header"><div><span className="modal-dot"/>{help?'一点指南，轻松上手':selected?.name}</div><div>{!help&&selected&&<button className="icon-button" aria-label="复制当前文件路径" title={copyPathFormat==='url'?'复制完整 GitHub 链接 (⌘ / Ctrl + C)':'复制仓库相对路径 (⌘ / Ctrl + C)'} onClick={()=>void copyPath(selected)}><Copy size={16}/></button>}{!help&&selected?.type==='file'&&<button className="icon-button" aria-label="下载当前文件" onClick={()=>void downloadFile(selected)}><Download size={17}/></button>}<button className="icon-button" aria-label="关闭预览" onClick={()=>{setQuickLook(false);setHelp(false)}}><X size={20}/></button></div></div>{help?<div className="help-content"><span className="help-eyebrow">HELLO, CURIOUS HUMAN.</span><h2>熟悉的操作，全新的发现。</h2><p>粘贴一个公开 GitHub 仓库链接，像浏览本地文件夹一样探索它。</p><div className="shortcut-list">{[['快速预览 / 关闭预览','空格'],['选择上一个 / 下一个文件','↑ ↓ ← →'],['打开文件 / 进入文件夹','Enter'],['选择多个文件','⌘ / Ctrl + 点击'],['连续选择','Shift + 点击'],['选择所有文件','⌘ / Ctrl + A'],['复制所选文件路径','⌘ / Ctrl + C'],['聚焦仓库链接','⌘ / Ctrl + K'],['搜索整个仓库','⌘ / Ctrl + F'],['返回上级目录','⌘ / Ctrl + ↑'],['关闭弹窗','Esc']].map(([label,key])=><div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div><div className="help-note"><Info size={17}/><p>支持公开仓库、分支和文件链接。网页以只读方式浏览，收藏保存在当前浏览器。GitHub 未登录 API 有调用额度；私有仓库、重命名和删除暂不支持。下载 ZIP 后，可在 Mac 上解压并用 Finder 打开。</p></div><button className="primary-button" onClick={()=>setHelp(false)}>开始探索<ArrowUpRight size={15}/></button></div>:selected&&<><div className="quick-look-body"><FilePreview key={`${repoId}/${selected.path}`} entry={selected} repository={repository} large onDownload={()=>void downloadFile(selected)}/></div><div className="quick-look-footer"><span>{selected.path}</span><span>{formatBytes(selected.size)}<kbd>←</kbd><kbd>→</kbd>切换文件</span></div></>}</div></div>}
   </div>
 }
