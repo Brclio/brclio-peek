@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { ArrowUp, ArrowUpDown, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Code2, Columns3, Copy, Download, ExternalLink, Eye, File, FileArchive, FileCode2, FileImage, FileText, Film, FolderClosed, GitBranch, Github, Grid2X2, HardDrive, HelpCircle, History, Image, Info, Keyboard, Link2, List, Loader2, Menu, Music, PanelLeft, PanelRight, Plus, Search, Sparkles, Star, X } from 'lucide-react'
+import { ArrowUp, ArrowUpDown, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Code2, Columns3, Copy, Download, ExternalLink, Eye, File, FileArchive, FileCode2, FileImage, FileText, Film, FolderClosed, GitBranch, Github, Grid2X2, HardDrive, HelpCircle, History, Image, Info, Keyboard, Link2, List, Loader2, Maximize2, Menu, Minimize2, Music, PanelLeft, PanelRight, Plus, Search, Sparkles, Star, X } from 'lucide-react'
 import { demoRepository } from './lib/demo'
 import { loadRepository, formatBytes, getRawUrl, getGithubUrl, getArchiveUrl } from './lib/github'
 import type { RepoEntry, Repository, FileKind } from './lib/github'
@@ -30,10 +30,10 @@ function FolderArt({small = false}: {small?:boolean}) {
 }
 
 function FileArt({entry, compact = false}: {entry:RepoEntry;compact?:boolean}) {
-  if (entry.type==='dir') return compact ? <FolderClosed size={17} className="kind-folder" fill="currentColor" fillOpacity={0.18}/> : <FolderArt/>
+  if (entry.type==='dir') return compact ? <FolderClosed size={26} className="compact-file-art kind-folder" fill="currentColor" fillOpacity={0.18}/> : <FolderArt/>
   if (entry.kind==='image' && !compact) return <div className="image-art"><img src={entry.url} alt="" loading="lazy" onError={e=>{e.currentTarget.style.visibility='hidden'}}/><FileImage className="image-fallback" size={35}/></div>
   const Icon = entry.kind==='video' ? Film : entry.kind==='audio' ? Music : entry.kind==='code' ? FileCode2 : entry.kind==='document' ? FileText : entry.kind==='archive' ? FileArchive : File
-  if (compact) return <Icon size={17} className={`kind-${entry.kind}`}/>
+  if (compact) return <Icon size={26} className={`compact-file-art kind-${entry.kind}`}/>
   return <div className={`file-art kind-${entry.kind}`}><span className="dogear"/><Icon size={28} strokeWidth={1.3}/><span className="file-extension">{entry.name==='LICENSE'?'TXT':entry.name.split('.').pop()?.toUpperCase().slice(0,5)}</span></div>
 }
 
@@ -55,6 +55,8 @@ export default function App() {
   const [help,setHelp] = useState(false)
   const [recentOpen,setRecentOpen] = useState(false)
   const [sidebarOpen,setSidebarOpen] = useState(false)
+  const [isMaximized,setIsMaximized] = useState(false)
+  const [restoreHeight,setRestoreHeight] = useState(0)
   const [favorites,setFavorites] = useState<string[]>(()=>readSaved('peek-favorites',[]))
   const [recents,setRecents] = useState<Recent[]>(()=>readSaved('peek-recents',[]))
   const [toast,setToast] = useState('')
@@ -64,6 +66,7 @@ export default function App() {
   const repoInputRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const explorerRef = useRef<HTMLDivElement>(null)
+  const finderRef = useRef<HTMLElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousFocus = useRef<HTMLElement|null>(null)
   const anchorPath = useRef<string|null>(null)
@@ -97,7 +100,22 @@ export default function App() {
   useEffect(()=>save('peek-favorites',favorites),[favorites])
   useEffect(()=>save('peek-recents',recents),[recents])
   useEffect(()=>()=>loadController.current?.abort(),[])
+  useEffect(()=>{
+    if(!isMaximized)return
+    const overflow=document.body.style.overflow
+    document.body.style.overflow='hidden'
+    return()=>{document.body.style.overflow=overflow}
+  },[isMaximized])
   useEffect(()=>{const close=()=>setContext(null);window.addEventListener('click',close);window.addEventListener('resize',close);return()=>{window.removeEventListener('click',close);window.removeEventListener('resize',close)}},[])
+
+  const toggleWindowSize = ()=>{
+    if(!isMaximized)setRestoreHeight(finderRef.current?.getBoundingClientRect().height??0)
+    setIsMaximized(value=>!value);setContext(null);setRecentOpen(false)
+  }
+  const focusRepoInput = ()=>{
+    setIsMaximized(false);setSidebarOpen(false)
+    requestAnimationFrame(()=>repoInputRef.current?.focus())
+  }
 
   const navigate = (path:string,category:Category='all')=>{
     setHistory(h=>[...h.slice(0,historyIndex+1),{path,category}]);setHistoryIndex(historyIndex+1)
@@ -110,7 +128,7 @@ export default function App() {
     setSearch(value);setSelectedPaths([]);setQuickLook(false);setContext(null);anchorPath.current=null
   }
   const openRepo = async (input:string)=>{
-    if(!input.trim()){repoInputRef.current?.focus();return}
+    if(!input.trim()){focusRepoInput();return}
     loadController.current?.abort();const controller=new AbortController();loadController.current=controller
     setLoading(true);setError('');setRecentOpen(false);setQuickLook(false);setContext(null);anchorPath.current=null
     try {
@@ -166,7 +184,7 @@ export default function App() {
     }catch{notify('下载失败，请通过「在 GitHub 打开」获取原文件。')}
   }
   const downloadRepo = ()=>{
-    if(repository.isDemo){notify('当前是示例仓库，请先输入真实 GitHub 链接。');repoInputRef.current?.focus();return}
+    if(repository.isDemo){notify('当前是示例仓库，请先输入真实 GitHub 链接。');focusRepoInput();return}
     const a=document.createElement('a');a.href=getArchiveUrl(repository);a.target='_blank';a.rel='noopener noreferrer';a.click();notify('已交给浏览器下载仓库 ZIP')
   }
 
@@ -185,11 +203,19 @@ export default function App() {
       }
       if(modifier&&['k','f'].includes(event.key.toLowerCase())){
         event.preventDefault();setQuickLook(false);setHelp(false);setRecentOpen(false);setContext(null)
-        const destination=event.key.toLowerCase()==='k'?repoInputRef.current:searchRef.current
+        const openingRepository=event.key.toLowerCase()==='k'
+        if(openingRepository)setIsMaximized(false)
+        const destination=openingRepository?repoInputRef.current:searchRef.current
         previousFocus.current=destination;requestAnimationFrame(()=>destination?.focus())
         return
       }
-      if(event.key==='Escape'){setQuickLook(false);setHelp(false);setRecentOpen(false);setContext(null);setSidebarOpen(false);return}
+      if(event.key==='Escape'){
+        if(quickLook||help){event.preventDefault();setQuickLook(false);setHelp(false)}
+        else if(context){event.preventDefault();setContext(null)}
+        else if(sidebarOpen||recentOpen){event.preventDefault();setSidebarOpen(false);setRecentOpen(false)}
+        else if(isMaximized){event.preventDefault();setIsMaximized(false)}
+        return
+      }
       if(typing||help)return
       const fileButton=target?.closest('.file-item,.file-row,.column-file,.gallery-strip button')
       const inExplorer=Boolean(target&&explorerRef.current?.contains(target)&&(target===explorerRef.current||fileButton))
@@ -299,8 +325,10 @@ export default function App() {
     </button>
   }
 
+  const windowSizeButton = (mobile=false)=><button type="button" className={mobile?'icon-button window-size-toggle':'window-zoom'} aria-label={isMaximized?'恢复文件浏览器':'放大文件浏览器'} title={isMaximized?'恢复文件浏览器 (Esc)':'放大文件浏览器'} aria-pressed={isMaximized} aria-controls="repository-finder" onClick={toggleWindowSize}>{isMaximized?<Minimize2 size={mobile?16:9}/>:<Maximize2 size={mobile?16:9}/>}</button>
+
   return <div className="app-shell" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();const url=e.dataTransfer.getData('text/uri-list')||e.dataTransfer.getData('text/plain');if(url.startsWith('https://github.com/')){setRepoInput(url);void openRepo(url)}}}>
-    <header className="app-header" inert={quickLook||help}>
+    <header className="app-header" inert={quickLook||help||isMaximized}>
       <a className="brand" href="#" onClick={e=>{e.preventDefault();openDemo()}} aria-label="Peek 首页"><span className="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 10h9l3 4h10v13H5Z" fill="currentColor"/><path d="M12 18v4m9-4v4" stroke="#fefcf6" strokeWidth="2.7" strokeLinecap="round"/></svg></span><span className="brand-word">peek<span className="brand-dot">.</span></span><span className="brand-by">by Brclio</span></a>
       <nav className="top-nav" aria-label="主导航"><button className={!recentOpen?'active':''} onClick={()=>setRecentOpen(false)}><FolderClosed size={15}/>文件浏览器</button><button className={recentOpen?'active':''} onClick={()=>setRecentOpen(v=>!v)}><History size={15}/>最近打开{recents.length>0&&<span className="nav-count">{recents.length}</span>}</button></nav>
       <button className="help-button" aria-label="使用指南" onClick={()=>setHelp(true)}><HelpCircle size={16}/><span>使用指南</span><ArrowUpRight size={14}/></button>
@@ -308,23 +336,25 @@ export default function App() {
     </header>
 
     <main className="main-layout" inert={quickLook||help}>
-      <section className="intro-row"><div><div className="eyebrow"><span/>A LITTLE PEEK, A LOT TO DISCOVER</div><h1>GitHub 仓库，<span>像文件夹一样打开。</span></h1><p>熟悉的浏览方式，更轻松的发现。图片、视频、代码，按下空格就能预览。</p></div><div className="intro-note"><span className="note-spark">✳</span><span>少一点下载等待<br/>多一点即刻发现</span><svg viewBox="0 0 65 34" fill="none" aria-hidden="true"><path d="M2 5c18 26 40 23 58 7m-10-1 12-2-4 11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg></div></section>
+      <section className="intro-row" inert={isMaximized}><div><div className="eyebrow"><span/>A LITTLE PEEK, A LOT TO DISCOVER</div><h1>GitHub 仓库，<span>像文件夹一样打开。</span></h1><p>熟悉的浏览方式，更轻松的发现。图片、视频、代码，按下空格就能预览。</p></div><div className="intro-note"><span className="note-spark">✳</span><span>少一点下载等待<br/>多一点即刻发现</span><svg viewBox="0 0 65 34" fill="none" aria-hidden="true"><path d="M2 5c18 26 40 23 58 7m-10-1 12-2-4 11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg></div></section>
 
-      <section className="repo-input-section" aria-label="打开 GitHub 仓库"><form className="repo-form" onSubmit={e=>{e.preventDefault();void openRepo(repoInput)}}><Github size={21}/><input ref={repoInputRef} value={repoInput} onChange={e=>setRepoInput(e.target.value)} placeholder="粘贴 GitHub 仓库链接，例如 github.com/owner/repo" aria-label="GitHub 仓库链接" autoComplete="url" spellCheck={false}/><kbd className="input-shortcut">⌘ K</kbd><button className="primary-button" type="submit" aria-label="打开 GitHub 仓库" disabled={loading}>{loading?<Loader2 size={16} className="loading-spin"/>:<ArrowUpRight size={17}/>}<span>{loading?'正在打开':'打开仓库'}</span></button></form><div className="input-hint"><span><span className="status-dot"/>支持公开仓库 · 无需登录 GitHub</span><button onClick={openDemo}>先逛逛示例仓库<ArrowUpRight size={12}/></button></div></section>
-      {error&&<div className="error-banner" role="alert"><Info size={17}/><span>{error}</span><button className="icon-button" aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
+      <section className="repo-input-section" aria-label="打开 GitHub 仓库" inert={isMaximized}><form className="repo-form" onSubmit={e=>{e.preventDefault();void openRepo(repoInput)}}><Github size={21}/><input ref={repoInputRef} value={repoInput} onChange={e=>setRepoInput(e.target.value)} placeholder="粘贴 GitHub 仓库链接，例如 github.com/owner/repo" aria-label="GitHub 仓库链接" autoComplete="url" spellCheck={false}/><kbd className="input-shortcut">⌘ K</kbd><button className="primary-button" type="submit" aria-label="打开 GitHub 仓库" disabled={loading}>{loading?<Loader2 size={16} className="loading-spin"/>:<ArrowUpRight size={17}/>}<span>{loading?'正在打开':'打开仓库'}</span></button></form><div className="input-hint"><span><span className="status-dot"/>支持公开仓库 · 无需登录 GitHub</span><button onClick={openDemo}>先逛逛示例仓库<ArrowUpRight size={12}/></button></div></section>
+      {error&&!isMaximized&&<div className="error-banner" role="alert"><Info size={17}/><span>{error}</span><button className="icon-button" aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
 
-      <section className={`finder-window ${showInspector?'has-inspector':''}`} aria-label="仓库文件浏览器" aria-busy={loading}>
+      <div className="finder-frame" style={isMaximized?{height:restoreHeight}:undefined}>
+      <section ref={finderRef} id="repository-finder" className={`finder-window ${showInspector?'has-inspector':''} ${isMaximized?'is-maximized':''}`} aria-label="仓库文件浏览器" aria-busy={loading}>
         <aside className={`finder-sidebar ${sidebarOpen?'mobile-open':''}`}>
-          <div className="sidebar-top"><span className="traffic-lights" aria-hidden="true"><i/><i/><i/></span><span className="sidebar-workspace">工作区</span><button className="icon-button sidebar-close" aria-label="关闭侧边栏" onClick={()=>setSidebarOpen(false)}><X size={15}/></button></div>
+          <div className="sidebar-top"><div className="traffic-lights"><i aria-hidden="true"/><i aria-hidden="true"/>{windowSizeButton()}</div><span className="sidebar-workspace">工作区</span><button className="icon-button sidebar-close" aria-label="关闭侧边栏" onClick={()=>setSidebarOpen(false)}><X size={15}/></button></div>
           <div className="sidebar-group-label">资料库</div>
           <nav className="sidebar-nav" aria-label="文件分类">{categoryItems.map(({id,icon:Icon,label})=><button key={id} className={location.category===id?'active':''} onClick={()=>navigate('',id)}><Icon size={17}/><span>{label}</span>{['image','video','code','document'].includes(id)&&<small>{repository.entries.filter(e=>e.kind===id).length}</small>}</button>)}</nav>
           <div className="sidebar-group-label repo-group">当前仓库</div><button className="sidebar-repo" onClick={()=>navigate('')}><span className="repo-avatar">{repository.owner.slice(0,1).toUpperCase()}</span><span><strong>{repository.name}</strong><small>{repository.owner}</small></span><span className="status-dot"/></button>
-          <button className="add-repository" onClick={()=>{repoInputRef.current?.focus();setSidebarOpen(false)}}><Plus size={15}/>打开其他仓库</button>
+          <button className="add-repository" onClick={focusRepoInput}><Plus size={15}/>打开其他仓库</button>
           <div className="sidebar-bottom"><div className="mini-folder"><FolderArt small/><span className="tiny-star">✦</span></div><strong>好东西，值得一探。</strong><p>让每一个仓库<br/>都成为你的灵感文件夹。</p><button onClick={()=>setHelp(true)}>认识 Peek<ArrowUpRight size={12}/></button></div>
         </aside>
 
         <div className="finder-main">
-          <div className="finder-toolbar"><div className="navigation-controls"><button className="icon-button sidebar-toggle" aria-label="切换侧边栏" onClick={()=>setSidebarOpen(v=>!v)}><Menu size={18}/></button><button className="icon-button" title="后退 (⌥ ←)" aria-label="后退" disabled={historyIndex===0} onClick={()=>moveHistory(-1)}><ChevronLeft size={19}/></button><button className="icon-button" title="前进 (⌥ →)" aria-label="前进" disabled={historyIndex===history.length-1} onClick={()=>moveHistory(1)}><ChevronRight size={19}/></button>{location.path&&<button className="icon-button" title="返回上级目录 (⌘ ↑)" aria-label="返回上级目录" onClick={()=>navigate(parentPath(location.path))}><ArrowUp size={16}/></button>}</div><div className="toolbar-title"><strong>{displayTitle}</strong><span>{repository.isDemo?'示例仓库':`${repository.owner}/${repository.name}`}</span></div><div className="toolbar-actions"><CopyPathControl format={copyPathFormat} onFormatChange={setCopyPathFormat} onCopy={()=>void copyPaths()} selectedCount={selectedEntries.length}/><button className="icon-button" title="下载整个仓库 ZIP" aria-label="下载仓库 ZIP" onClick={downloadRepo}><Download size={17}/></button><button className="icon-button" title="快速预览 (空格)" aria-label="快速预览" disabled={!selected} onClick={()=>setQuickLook(true)}><Eye size={18}/></button><span className="toolbar-divider"/><button className={`icon-button ${showInspector?'toggled':''}`} title="切换预览栏" aria-label="切换预览栏" aria-pressed={showInspector} onClick={()=>setShowInspector(v=>!v)}><PanelRight size={17}/></button></div></div>
+          {error&&isMaximized&&<div className="error-banner" role="alert"><Info size={17}/><span>{error}</span><button className="icon-button" aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button></div>}
+          <div className="finder-toolbar"><div className="navigation-controls">{windowSizeButton(true)}<button className="icon-button sidebar-toggle" aria-label="切换侧边栏" onClick={()=>setSidebarOpen(v=>!v)}><Menu size={18}/></button><button className="icon-button" title="后退 (⌥ ←)" aria-label="后退" disabled={historyIndex===0} onClick={()=>moveHistory(-1)}><ChevronLeft size={19}/></button><button className="icon-button" title="前进 (⌥ →)" aria-label="前进" disabled={historyIndex===history.length-1} onClick={()=>moveHistory(1)}><ChevronRight size={19}/></button>{location.path&&<button className="icon-button" title="返回上级目录 (⌘ ↑)" aria-label="返回上级目录" onClick={()=>navigate(parentPath(location.path))}><ArrowUp size={16}/></button>}</div><div className="toolbar-title"><strong>{displayTitle}</strong><span>{repository.isDemo?'示例仓库':`${repository.owner}/${repository.name}`}</span></div><div className="toolbar-actions"><CopyPathControl format={copyPathFormat} onFormatChange={setCopyPathFormat} onCopy={()=>void copyPaths()} selectedCount={selectedEntries.length}/><button className="icon-button" title="下载整个仓库 ZIP" aria-label="下载仓库 ZIP" onClick={downloadRepo}><Download size={17}/></button><button className="icon-button" title="快速预览 (空格)" aria-label="快速预览" disabled={!selected} onClick={()=>setQuickLook(true)}><Eye size={18}/></button><span className="toolbar-divider"/><button className={`icon-button ${showInspector?'toggled':''}`} title="切换预览栏" aria-label="切换预览栏" aria-pressed={showInspector} onClick={()=>setShowInspector(v=>!v)}><PanelRight size={17}/></button></div></div>
           <div className="finder-subtoolbar"><div className="branch-select"><GitBranch size={14}/><select aria-label="分支" value={repository.branch} disabled={loading||repository.isDemo} onChange={e=>void openRepo(`https://github.com/${repoId}/tree/${e.target.value.split('/').map(encodeURIComponent).join('/')}`)}>{[...new Set([repository.branch,...(repository.branches||[])])].map(b=><option key={b} value={b}>{b}</option>)}</select><ChevronDown size={11}/></div><div className="view-switcher" aria-label="视图模式">{views.map(({id,label,icon:Icon})=><button key={id} aria-label={label} title={label} aria-pressed={view===id} className={view===id?'active':''} onClick={()=>{setView(id);if(id==='gallery'&&!selected&&fileEntries[0])setSelectedPaths([fileEntries[0].path])}}><Icon size={15}/></button>)}</div><div className="sort-control"><ArrowUpDown size={13}/><select aria-label="排序方式" value={sort} onChange={e=>setSort(e.target.value)}><option value="name">名称</option><option value="size">大小</option><option value="type">类型</option></select><ChevronDown size={10}/></div><div className="file-search"><Search size={14}/><input ref={searchRef} aria-label="搜索文件" placeholder="搜索文件…" value={search} onChange={e=>changeSearch(e.target.value)}/>{search&&<button aria-label="清除搜索" onClick={()=>changeSearch('')}><X size={12}/></button>}</div></div>
 
           <div className="finder-body"><div className="explorer" ref={explorerRef} tabIndex={0} aria-label="文件区域">
@@ -339,12 +369,14 @@ export default function App() {
         </div>
       </section>
 
-      <section className="feature-notes" aria-label="浏览提示"><div><span className="feature-icon"><Link2 size={18}/></span><span><strong>一个链接，就够了</strong><small>打开公开仓库，无需克隆和安装</small></span></div><div><span className="feature-icon yellow"><Keyboard size={18}/></span><span><strong>你的肌肉记忆，依然管用</strong><small>空格预览、方向键选择、双击打开</small></span></div><div><span className="feature-icon red"><FileImage size={18}/></span><span><strong>不止代码，还有灵感</strong><small>图片、视频、文档，尽收眼底</small></span></div></section>
-      <footer className="page-footer"><span>Made for the curious. <span className="footer-spark">✳</span> Crafted by <a href="https://brclio.com" target="_blank" rel="noreferrer">Brclio</a></span><span>一探究竟，从这里开始。<button onClick={()=>setHelp(true)}>键盘快捷键 <Keyboard size={13}/></button></span></footer>
+      </div>
+
+      <section className="feature-notes" aria-label="浏览提示" inert={isMaximized}><div><span className="feature-icon"><Link2 size={18}/></span><span><strong>一个链接，就够了</strong><small>打开公开仓库，无需克隆和安装</small></span></div><div><span className="feature-icon yellow"><Keyboard size={18}/></span><span><strong>你的肌肉记忆，依然管用</strong><small>空格预览、方向键选择、双击打开</small></span></div><div><span className="feature-icon red"><FileImage size={18}/></span><span><strong>不止代码，还有灵感</strong><small>图片、视频、文档，尽收眼底</small></span></div></section>
+      <footer className="page-footer" inert={isMaximized}><span>Made for the curious. <span className="footer-spark">✳</span> Crafted by <a href="https://brclio.com" target="_blank" rel="noreferrer">Brclio</a></span><span>一探究竟，从这里开始。<button onClick={()=>setHelp(true)}>键盘快捷键 <Keyboard size={13}/></button></span></footer>
     </main>
 
     {context&&!quickLook&&!help&&<div className="context-menu" style={{left:context.x,top:context.y}} role="menu"><button role="menuitem" onClick={()=>openEntry(context.entry)}><Eye size={15}/>{context.entry.type==='dir'?'打开文件夹':'快速预览'}<kbd>↵</kbd></button><button role="menuitem" onClick={()=>toggleFavorite(context.entry)}><Star size={15}/>{isFavorite(context.entry)?'取消收藏':'添加到收藏'}</button><button role="menuitem" onClick={()=>void copyPaths()}><Copy size={15}/>{copyPathFormat==='url'?'复制完整链接':'复制相对路径'}<kbd>⌘ C</kbd></button>{context.entry.type==='file'&&<button role="menuitem" onClick={()=>void downloadFile(context.entry)}><Download size={15}/>下载文件</button>}{!repository.isDemo&&<a role="menuitem" href={getGithubUrl(repository,context.entry)} target="_blank" rel="noreferrer"><ExternalLink size={15}/>在 GitHub 打开</a>}</div>}
     {toast&&<div className="toast" role="status"><Check size={16}/>{toast}</div>}
-    {(quickLook&&selected||help)&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuickLook(false);setHelp(false)}}}><div ref={dialogRef} className={`modal-content ${help?'help-modal':'quick-look'}`} role="dialog" tabIndex={-1} aria-modal="true" aria-label={help?'Peek 使用指南':`${selected?.name} 快速预览`}><div className="modal-header"><div><span className="modal-dot"/>{help?'一点指南，轻松上手':selected?.name}</div><div>{!help&&selected&&<button className="icon-button" aria-label="复制当前文件路径" title={copyPathFormat==='url'?'复制完整 GitHub 链接 (⌘ / Ctrl + C)':'复制仓库相对路径 (⌘ / Ctrl + C)'} onClick={()=>void copyPath(selected)}><Copy size={16}/></button>}{!help&&selected?.type==='file'&&<button className="icon-button" aria-label="下载当前文件" onClick={()=>void downloadFile(selected)}><Download size={17}/></button>}<button className="icon-button" aria-label="关闭预览" onClick={()=>{setQuickLook(false);setHelp(false)}}><X size={20}/></button></div></div>{help?<div className="help-content"><span className="help-eyebrow">HELLO, CURIOUS HUMAN.</span><h2>熟悉的操作，全新的发现。</h2><p>粘贴一个公开 GitHub 仓库链接，像浏览本地文件夹一样探索它。</p><div className="shortcut-list">{[['快速预览 / 关闭预览','空格'],['选择上一个 / 下一个文件','↑ ↓ ← →'],['打开文件 / 进入文件夹','Enter'],['选择多个文件','⌘ / Ctrl + 点击'],['连续选择','Shift + 点击'],['选择所有文件','⌘ / Ctrl + A'],['复制所选文件路径','⌘ / Ctrl + C'],['聚焦仓库链接','⌘ / Ctrl + K'],['搜索整个仓库','⌘ / Ctrl + F'],['返回上级目录','⌘ / Ctrl + ↑'],['关闭弹窗','Esc']].map(([label,key])=><div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div><div className="help-note"><Info size={17}/><p>支持公开仓库、分支和文件链接。网页以只读方式浏览，收藏保存在当前浏览器。GitHub 未登录 API 有调用额度；私有仓库、重命名和删除暂不支持。下载 ZIP 后，可在 Mac 上解压并用 Finder 打开。</p></div><button className="primary-button" onClick={()=>setHelp(false)}>开始探索<ArrowUpRight size={15}/></button></div>:selected&&<><div className="quick-look-body"><FilePreview key={`${repoId}/${selected.path}`} entry={selected} repository={repository} large onDownload={()=>void downloadFile(selected)}/></div><div className="quick-look-footer"><span>{selected.path}</span><span>{formatBytes(selected.size)}<kbd>←</kbd><kbd>→</kbd>切换文件</span></div></>}</div></div>}
+    {(quickLook&&selected||help)&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuickLook(false);setHelp(false)}}}><div ref={dialogRef} className={`modal-content ${help?'help-modal':'quick-look'}`} role="dialog" tabIndex={-1} aria-modal="true" aria-label={help?'Peek 使用指南':`${selected?.name} 快速预览`}><div className="modal-header"><div><span className="modal-dot"/>{help?'一点指南，轻松上手':selected?.name}</div><div>{!help&&selected&&<button className="icon-button" aria-label="复制当前文件路径" title={copyPathFormat==='url'?'复制完整 GitHub 链接 (⌘ / Ctrl + C)':'复制仓库相对路径 (⌘ / Ctrl + C)'} onClick={()=>void copyPath(selected)}><Copy size={16}/></button>}{!help&&selected?.type==='file'&&<button className="icon-button" aria-label="下载当前文件" onClick={()=>void downloadFile(selected)}><Download size={17}/></button>}<button className="icon-button" aria-label="关闭预览" onClick={()=>{setQuickLook(false);setHelp(false)}}><X size={20}/></button></div></div>{help?<div className="help-content"><span className="help-eyebrow">HELLO, CURIOUS HUMAN.</span><h2>熟悉的操作，全新的发现。</h2><p>粘贴一个公开 GitHub 仓库链接，像浏览本地文件夹一样探索它。</p><div className="shortcut-list">{[['快速预览 / 关闭预览','空格'],['选择上一个 / 下一个文件','↑ ↓ ← →'],['打开文件 / 进入文件夹','Enter'],['选择多个文件','⌘ / Ctrl + 点击'],['连续选择','Shift + 点击'],['选择所有文件','⌘ / Ctrl + A'],['复制所选文件路径','⌘ / Ctrl + C'],['聚焦仓库链接','⌘ / Ctrl + K'],['搜索整个仓库','⌘ / Ctrl + F'],['返回上级目录','⌘ / Ctrl + ↑'],['关闭弹窗 / 恢复窗口','Esc']].map(([label,key])=><div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div><div className="help-note"><Info size={17}/><p>支持公开仓库、分支和文件链接。网页以只读方式浏览，收藏保存在当前浏览器。GitHub 未登录 API 有调用额度；私有仓库、重命名和删除暂不支持。下载 ZIP 后，可在 Mac 上解压并用 Finder 打开。</p></div><button className="primary-button" onClick={()=>setHelp(false)}>开始探索<ArrowUpRight size={15}/></button></div>:selected&&<><div className="quick-look-body"><FilePreview key={`${repoId}/${selected.path}`} entry={selected} repository={repository} large onDownload={()=>void downloadFile(selected)}/></div><div className="quick-look-footer"><span>{selected.path}</span><span>{formatBytes(selected.size)}<kbd>←</kbd><kbd>→</kbd>切换文件</span></div></>}</div></div>}
   </div>
 }

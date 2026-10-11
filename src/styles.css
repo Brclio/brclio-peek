@@ -45,4 +45,48 @@
 @media(max-width:600px){.copy-path-control{height:27px;margin-right:3px}.copy-format-select select{width:57px;padding-left:5px}.toolbar-title{min-width:24px}.toolbar-actions{gap:0}}
 .sidebar-close{display:none}
 @media(max-width:600px){.sidebar-top .sidebar-close{display:flex;margin-left:auto}.sidebar-top{gap:14px}}
+/* Larger file artwork in the compact views, without scaling navigation icons. */
+.compact-file-art{width:26px;height:26px;flex:none}
+.file-row{min-height:48px;gap:12px;padding:10px 8px}
+.file-row .entry-name{font-size:11px}
+.list-heading{padding-left:46px}
+.column-file{min-height:46px;gap:10px;font-size:10px}
+.file-column{min-width:200px}
+.gallery-strip{gap:10px;padding:16px}
+.gallery-strip>button{flex-basis:104px;min-height:108px;padding:10px 6px;gap:10px}
+.gallery-strip .folder-art{width:70px;height:58px}
+.gallery-strip .file-art{width:48px;height:62px}
+.gallery-strip .file-art>svg{width:28px;height:28px}
+.gallery-strip .file-extension{font-size:6px}
+.gallery-strip .dogear{width:14px;height:14px}
+.gallery-strip .image-art{width:78px;height:58px}
+.gallery-strip>button>span{width:90px;font-size:9px}
+/* Finder's green window control keeps the repository and selection in place. */
+html{scrollbar-gutter:stable}
+.sidebar-top{gap:20px}
+.traffic-lights{align-items:center;gap:3px}
+.traffic-lights i{width:11px;height:11px;margin:0 2px}
+.window-zoom{width:24px;height:24px;display:grid;place-items:center;padding:0;position:relative;border-radius:5px;color:#47633d}
+.window-zoom::before{content:'';position:absolute;width:12px;height:12px;border-radius:50%;background:#a4c398;border:1px solid #92b188}
+.window-zoom>svg{position:relative;opacity:0}
+.traffic-lights:hover .window-zoom>svg,.window-zoom:focus-visible>svg,.window-zoom[aria-pressed="true"]>svg{opacity:1}
+.window-zoom:hover{color:#3e5b35!important}
+.navigation-controls .window-size-toggle{display:none}
+.finder-window.is-maximized{position:fixed;inset:12px;z-index:60;height:auto;min-height:0;max-height:none;box-shadow:0 12px 60px #363f2630}
+.is-maximized .finder-main{min-height:0;overflow:hidden}
+.is-maximized .finder-main>.error-banner{margin:10px 12px 0;flex-shrink:0}
+.is-maximized .finder-sidebar{overflow-y:auto}
+.is-maximized .finder-sidebar>*{flex-shrink:0}
+.is-maximized .sidebar-top{position:sticky;top:0;z-index:1;background:inherit}
+.is-maximized .gallery-stage{max-height:none}
+@media(max-width:750px){
+  .is-maximized .finder-body{min-height:0;overflow:auto}
+  .is-maximized .explorer{min-height:330px}
+  .is-maximized .gallery-stage{height:clamp(210px,45dvh,480px);flex:none}
+}
+@media(max-width:600px){
+  .finder-window.is-maximized{inset:0;border-radius:0}
+  .navigation-controls .window-size-toggle{display:inline-flex;color:#658153}
+  .sidebar-top{gap:14px}
+}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
